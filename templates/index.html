@@ -28,7 +28,7 @@
                     {% endif %}
                     <div class="card-body">
                         <h5 class="card-title">{{ note.title }}</h5>
-                        <p class="card-text text-muted">{{ note.desc|truncate(100) }}</p>
+                        <p class="card-text text-muted" style="white-space: pre-wrap;">{{ note.desc|truncate(100) }}</p>
                         <div class="note-stats">
                             <span class="text-danger"><i class="fas fa-heart"></i> {{ note.likes }}</span>
                         </div>

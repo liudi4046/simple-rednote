@@ -15,8 +15,10 @@
 ## 安装步骤
 
 ### 环境要求
-- Python 3
 
+- Python 3.11及以下。
+
+由于兼容性问题，Python版本太高无法运行。
 
 ## 使用方法
 
@@ -72,4 +74,4 @@ sh run.sh
 
 ## 感谢
 使用了https://github.com/ReaJason/xhs 。感谢该repo的开发者。
-开发中密集使用了`cursor`。时代变了。
+开发中密集使用了`cursor`，AI现在非常强了。
