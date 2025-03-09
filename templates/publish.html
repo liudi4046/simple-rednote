@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+
+{% block title %}发布笔记 - 简易小红书{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-8">
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0"><i class="fas fa-edit"></i> 发布图文笔记</h4>
+            </div>
+            <div class="card-body">
+                <form method="post" enctype="multipart/form-data" id="imageForm">
+                    <input type="hidden" name="note_type" value="image">
+                    
+                    <div class="mb-3">
+                        <label for="imageTitle" class="form-label">标题</label>
+                        <input type="text" class="form-control" id="imageTitle" name="title" required>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="imageDesc" class="form-label">内容</label>
+                        <textarea class="form-control" id="imageDesc" name="desc" rows="5" required></textarea>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <label for="imageFiles" class="form-label">上传图片</label>
+                        <input type="file" class="form-control" id="imageFiles" name="images" accept="image/*" multiple required>
+                        <div class="form-text">可以选择多张图片，最多9张</div>
+                    </div>
+                    
+                    <div class="mb-3">
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" id="imagePrivate" name="is_private" value="true">
+                            <label class="form-check-label" for="imagePrivate">
+                                设为私密笔记
+                            </label>
+                        </div>
+                    </div>
+                    
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">
+                            <i class="fas fa-paper-plane"></i> 发布图文笔记
+                        </button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+    // 限制图片上传数量
+    document.getElementById('imageFiles').addEventListener('change', function() {
+        if (this.files.length > 9) {
+            alert('最多只能上传9张图片');
+            this.value = '';
+        }
+    });
+</script>
+{% endblock %} 

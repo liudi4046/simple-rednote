@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+
+{% block title %}登录 - 简易小红书{% endblock %}
+
+{% block content %}
+<div class="row justify-content-center">
+    <div class="col-md-6">
+        <div class="card">
+            <div class="card-header">
+                <h4 class="mb-0"><i class="fas fa-sign-in-alt"></i> 登录</h4>
+            </div>
+            <div class="card-body">
+                <form method="post">
+                    <div class="mb-3">
+                        <label for="cookie" class="form-label">小红书Cookie</label>
+                        <textarea class="form-control" id="cookie" name="cookie" rows="5" required></textarea>
+                        <div class="form-text">
+                            请输入您的小红书Cookie，获取方法：
+                            <ol class="mt-2">
+                                <li>打开浏览器，访问小红书网页版 <a href="https://www.xiaohongshu.com" target="_blank">https://www.xiaohongshu.com</a></li>
+                                <li>登录您的小红书账号</li>
+                                <li>按F12打开开发者工具，切换到"网络"(Network)选项卡</li>
+                                <li>刷新页面，在请求列表中找到任意一个请求</li>
+                                <li>在右侧面板中找到"请求标头"(Request Headers)部分</li>
+                                <li>找到"Cookie"字段，复制其完整内容</li>
+                            </ol>
+                        </div>
+                    </div>
+                    <div class="d-grid">
+                        <button type="submit" class="btn btn-primary">登录</button>
+                    </div>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %} 
