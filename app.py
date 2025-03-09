@@ -373,6 +373,8 @@ def publish():
         is_private = request.form.get('is_private', 'false') == 'true'
         
         if not title or not desc:
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return jsonify({"error": "标题和内容不能为空"}), 400
             flash('标题和内容不能为空', 'danger')
             return redirect(url_for('publish'))
         
@@ -386,6 +388,8 @@ def publish():
                     images.append(filename)
             
             if not images:
+                if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                    return jsonify({"error": "请上传至少一张图片"}), 400
                 flash('请上传至少一张图片', 'danger')
                 return redirect(url_for('publish'))
             
@@ -397,11 +401,25 @@ def publish():
                 is_private=is_private
             )
             
-            flash(f'图文笔记发布成功: {result.get("note_id", "")}', 'success')
+            note_id = result.get("note_id", "")
+            success_message = f'图文笔记发布成功: {note_id}'
+            
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return jsonify({
+                    "success": True,
+                    "message": success_message,
+                    "note_id": note_id,
+                    "redirect": url_for('index')
+                })
+            
+            flash(success_message, 'success')
             return redirect(url_for('index'))
         
         except Exception as e:
-            flash(f'发布失败: {e}', 'danger')
+            error_message = f'发布失败: {e}'
+            if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+                return jsonify({"error": error_message}), 500
+            flash(error_message, 'danger')
             return redirect(url_for('publish'))
     
     return render_template('publish.html')
@@ -568,6 +586,11 @@ def clear_cache():
         'followers': {'data': None, 'timestamp': 0, 'ttl': 600},
         'note_details': {},
     }
+    
+    # 检查是否是AJAX请求
+    if request.headers.get('X-Requested-With') == 'XMLHttpRequest':
+        return jsonify({"success": True, "message": "缓存已清除"})
+    
     flash('缓存已清除', 'success')
     return redirect(url_for('index'))
 

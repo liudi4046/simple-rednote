@@ -10,7 +10,7 @@
                 <h4 class="mb-0"><i class="fas fa-edit"></i> 发布图文笔记</h4>
             </div>
             <div class="card-body">
-                <form method="post" enctype="multipart/form-data" id="imageForm">
+                <form method="post" enctype="multipart/form-data" id="publishForm">
                     <input type="hidden" name="note_type" value="image">
                     
                     <div class="mb-3">
@@ -24,9 +24,30 @@
                     </div>
                     
                     <div class="mb-3">
-                        <label for="imageFiles" class="form-label">上传图片</label>
-                        <input type="file" class="form-control" id="imageFiles" name="images" accept="image/*" multiple required>
-                        <div class="form-text">可以选择多张图片，最多9张</div>
+                        <label class="form-label">上传图片</label>
+                        <div class="d-grid">
+                            <button type="button" class="btn btn-outline-primary" id="addImageBtn">
+                                <i class="fas fa-plus"></i> 添加图片
+                            </button>
+                            <input type="file" id="singleImageUpload" accept="image/*" style="display: none;">
+                        </div>
+                        <div class="form-text mt-2">每次添加一张图片，最多9张。图片将按照添加顺序显示。</div>
+                    </div>
+                    
+                    <!-- 图片预览区域 -->
+                    <div class="mb-3">
+                        <div id="imagePreviewContainer" class="row g-2 mt-2">
+                            <!-- 预览图片将在这里显示 -->
+                        </div>
+                    </div>
+                    
+                    <!-- 上传进度条 -->
+                    <div class="mb-3" id="uploadProgressContainer" style="display: none;">
+                        <label class="form-label">上传进度</label>
+                        <div class="progress">
+                            <div id="uploadProgressBar" class="progress-bar progress-bar-striped progress-bar-animated bg-danger" role="progressbar" style="width: 0%"></div>
+                        </div>
+                        <small id="uploadStatus" class="form-text text-muted mt-1">准备上传...</small>
                     </div>
                     
                     <div class="mb-3">
@@ -39,9 +60,10 @@
                     </div>
                     
                     <div class="d-grid">
-                        <button type="submit" class="btn btn-primary">
+                        <button type="submit" class="btn btn-primary" id="publishButton" disabled>
                             <i class="fas fa-paper-plane"></i> 发布图文笔记
                         </button>
+                        <small class="text-muted text-center mt-1">请至少添加一张图片</small>
                     </div>
                 </form>
             </div>
@@ -52,12 +74,202 @@
 
 {% block extra_js %}
 <script>
-    // 限制图片上传数量
-    document.getElementById('imageFiles').addEventListener('change', function() {
-        if (this.files.length > 9) {
-            alert('最多只能上传9张图片');
-            this.value = '';
+    // 图片文件列表
+    let selectedFiles = [];
+    const maxImages = 9;
+    
+    // 添加图片按钮事件
+    document.getElementById('addImageBtn').addEventListener('click', function() {
+        // 触发隐藏的文件输入框点击事件
+        document.getElementById('singleImageUpload').click();
+    });
+    
+    // 文件选择事件
+    document.getElementById('singleImageUpload').addEventListener('change', function() {
+        if (!this.files || this.files.length === 0) {
+            return;
         }
+        
+        const file = this.files[0];
+        
+        // 检查是否已达到最大图片数量
+        if (selectedFiles.length >= maxImages) {
+            alert(`最多只能上传${maxImages}张图片`);
+            return;
+        }
+        
+        // 将新图片添加到数组的末尾，保持添加顺序
+        selectedFiles.push(file);
+        
+        // 更新预览
+        updateImagePreviews();
+        
+        // 清空文件输入框，以便用户可以选择另一张图片
+        this.value = '';
+        
+        // 启用发布按钮
+        document.getElementById('publishButton').disabled = false;
+        document.querySelector('.text-muted.text-center.mt-1').style.display = 'none';
+    });
+    
+    // 更新图片预览
+    function updateImagePreviews() {
+        const previewContainer = document.getElementById('imagePreviewContainer');
+        previewContainer.innerHTML = '';
+        
+        selectedFiles.forEach((file, index) => {
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const previewDiv = document.createElement('div');
+                previewDiv.className = 'col-4 col-md-3 mb-2';
+                previewDiv.innerHTML = `
+                    <div class="card h-100">
+                        <div class="position-relative">
+                            <img src="${e.target.result}" class="card-img-top" style="height: 150px; object-fit: cover;">
+                            <div class="position-absolute top-0 start-0 bg-dark bg-opacity-50 text-white px-2 rounded-bottom">
+                                ${index + 1}
+                            </div>
+                            <button type="button" class="btn btn-sm btn-danger position-absolute top-0 end-0 m-1 remove-image" data-index="${index}">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        </div>
+                    </div>
+                `;
+                previewContainer.appendChild(previewDiv);
+                
+                // 添加删除图片的事件
+                previewDiv.querySelector('.remove-image').addEventListener('click', function() {
+                    const index = parseInt(this.getAttribute('data-index'));
+                    removeImage(index);
+                });
+            };
+            reader.readAsDataURL(file);
+        });
+    }
+    
+    // 删除预览图片
+    function removeImage(index) {
+        selectedFiles.splice(index, 1);
+        updateImagePreviews();
+        
+        // 如果没有图片，禁用发布按钮
+        if (selectedFiles.length === 0) {
+            document.getElementById('publishButton').disabled = true;
+            document.querySelector('.text-muted.text-center.mt-1').style.display = 'block';
+        }
+    }
+    
+    // 表单提交处理
+    document.getElementById('publishForm').addEventListener('submit', function(e) {
+        e.preventDefault();
+        
+        if (selectedFiles.length === 0) {
+            alert('请至少添加一张图片');
+            return;
+        }
+        
+        // 显示上传进度条
+        const progressContainer = document.getElementById('uploadProgressContainer');
+        const progressBar = document.getElementById('uploadProgressBar');
+        const uploadStatus = document.getElementById('uploadStatus');
+        const publishButton = document.getElementById('publishButton');
+        
+        progressContainer.style.display = 'block';
+        publishButton.disabled = true;
+        publishButton.innerHTML = '<i class="fas fa-spinner fa-spin"></i> 正在发布...';
+        
+        // 创建FormData对象
+        const formData = new FormData(this);
+        
+        // 添加图片文件（按照selectedFiles的顺序）
+        selectedFiles.forEach(file => {
+            formData.append('images', file);
+        });
+        
+        // 设置AJAX请求头
+        const headers = new Headers();
+        headers.append('X-Requested-With', 'XMLHttpRequest');
+        
+        // 创建XHR请求
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', '{{ url_for("publish") }}');
+        xhr.setRequestHeader('X-Requested-With', 'XMLHttpRequest');
+        
+        // 上传进度处理
+        xhr.upload.addEventListener('progress', function(e) {
+            if (e.lengthComputable) {
+                const percentComplete = Math.round((e.loaded / e.total) * 100);
+                progressBar.style.width = percentComplete + '%';
+                progressBar.setAttribute('aria-valuenow', percentComplete);
+                uploadStatus.textContent = `正在上传... ${percentComplete}%`;
+            }
+        });
+        
+        // 请求完成处理
+        xhr.addEventListener('load', function() {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                uploadStatus.textContent = '上传成功，正在跳转...';
+                progressBar.classList.remove('progress-bar-animated');
+                progressBar.classList.add('bg-success');
+                
+                // 解析响应
+                try {
+                    const response = JSON.parse(xhr.responseText);
+                    if (response.redirect) {
+                        // 清除首页缓存
+                        fetch('/clear_cache')
+                            .then(() => {
+                                window.location.href = response.redirect;
+                            })
+                            .catch(() => {
+                                // 如果清除缓存失败，仍然跳转
+                                window.location.href = response.redirect;
+                            });
+                        return;
+                    }
+                } catch (e) {
+                    // 如果不是JSON响应，可能是重定向HTML
+                    if (xhr.responseText.includes('重定向')) {
+                        // 清除首页缓存
+                        fetch('/clear_cache')
+                            .then(() => {
+                                window.location.href = '{{ url_for("index") }}';
+                            })
+                            .catch(() => {
+                                window.location.href = '{{ url_for("index") }}';
+                            });
+                        return;
+                    }
+                }
+                
+                // 默认跳转到首页
+                fetch('/clear_cache')
+                    .then(() => {
+                        window.location.href = '{{ url_for("index") }}';
+                    })
+                    .catch(() => {
+                        window.location.href = '{{ url_for("index") }}';
+                    });
+            } else {
+                uploadStatus.textContent = '上传失败，请重试';
+                progressBar.classList.remove('progress-bar-animated');
+                progressBar.classList.add('bg-danger');
+                publishButton.disabled = false;
+                publishButton.innerHTML = '<i class="fas fa-paper-plane"></i> 发布图文笔记';
+            }
+        });
+        
+        // 请求错误处理
+        xhr.addEventListener('error', function() {
+            uploadStatus.textContent = '网络错误，请检查网络连接';
+            progressBar.classList.remove('progress-bar-animated');
+            progressBar.classList.add('bg-danger');
+            publishButton.disabled = false;
+            publishButton.innerHTML = '<i class="fas fa-paper-plane"></i> 发布图文笔记';
+        });
+        
+        // 发送请求
+        xhr.send(formData);
     });
 </script>
 {% endblock %} 
