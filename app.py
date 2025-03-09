@@ -73,49 +73,65 @@ def index():
         if not init_api_client():
             return redirect(url_for('login'))
     
-    # 获取用户笔记列表
-    user_id = "623dae130000000010009d41"  # 这里应该使用当前登录用户的ID
-    notes_data = api_client.get_user_notes(user_id)
-    
-    
-    
-    # 处理笔记数据以适应UI显示
-    formatted_notes = []
-    for note in notes_data:
-        # 打印每个笔记的原始数据，用于调试
+    # 获取当前用户信息
+    try:
+        self_info = api_client.client.get_self_info2()
+        user_id = self_info.get('user_id', '')
         
-        interact_info = note.get('interact_info', {})
-        if isinstance(interact_info, str):
+        if not user_id:
+            flash('获取用户信息失败，请重新登录或检查网络连接', 'danger')
+            return redirect(url_for('login'))
+            
+        print(f"当前用户ID: {user_id}")
+        
+        # 获取用户笔记列表
+        notes_data = api_client.get_user_notes(user_id)
+        
+        # 处理笔记数据以适应UI显示
+        formatted_notes = []
+        for note in notes_data:
+            # 打印每个笔记的原始数据，用于调试
+            
+            interact_info = note.get('interact_info', {})
+            if isinstance(interact_info, str):
+                try:
+                    interact_info = json.loads(interact_info)
+                except:
+                    interact_info = {}
+            
+            # 获取封面图片URL
+            cover_url = ''
+            if isinstance(note.get('cover'), dict) and 'info_list' in note.get('cover', {}):
+                info_list = note.get('cover', {}).get('info_list', [])
+                if info_list and len(info_list) > 0:
+                    cover_url = info_list[0].get('url', '')
+            
+            # 处理点赞数
+            likes = interact_info.get('liked_count', '0')
             try:
-                interact_info = json.loads(interact_info)
+                likes = int(likes)
             except:
-                interact_info = {}
+                likes = 0
+            
+            formatted_note = {
+                'note_id': note.get('note_id', ''),
+                'title': note.get('display_title', '无标题').strip(),
+                'desc': note.get('desc', ''),
+                'cover': cover_url,
+                'likes': likes,
+                'time': note.get('time', '')
+            }
+            formatted_notes.append(formatted_note)
         
-        # 获取封面图片URL
-        cover_url = ''
-        if isinstance(note.get('cover'), dict) and 'info_list' in note.get('cover', {}):
-            info_list = note.get('cover', {}).get('info_list', [])
-            if info_list and len(info_list) > 0:
-                cover_url = info_list[0].get('url', '')
+        # 显示用户信息
+        nickname = self_info.get('nickname', '')
+        if nickname:
+            flash(f'欢迎回来，{nickname}！', 'success')
         
-        # 处理点赞数
-        likes = interact_info.get('liked_count', '0')
-        try:
-            likes = int(likes)
-        except:
-            likes = 0
-        
-        formatted_note = {
-            'note_id': note.get('note_id', ''),
-            'title': note.get('display_title', '无标题').strip(),
-            'desc': note.get('desc', ''),
-            'cover': cover_url,
-            'likes': likes,
-            'time': note.get('time', '')
-        }
-        formatted_notes.append(formatted_note)
-    
-    return render_template('index.html', notes=formatted_notes)
+        return render_template('index.html', notes=formatted_notes)
+    except Exception as e:
+        flash(f'获取用户信息或笔记列表失败: {e}', 'danger')
+        return render_template('index.html', notes=[])
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -131,7 +147,19 @@ def login():
             
             # 初始化API客户端
             if init_api_client():
-                flash('登录成功', 'success')
+                try:
+                    # 获取并保存用户信息
+                    self_info = api_client.client.get_self_info2()
+                    user_id = self_info.get('user_id', '')
+                    if user_id:
+                        config["user_id"] = user_id
+                        save_config(config)
+                        flash('登录成功', 'success')
+                    else:
+                        flash('登录成功，但获取用户信息失败', 'warning')
+                except Exception as e:
+                    flash(f'登录成功，但获取用户信息失败: {e}', 'warning')
+                
                 return redirect(url_for('index'))
             else:
                 flash('登录失败，请检查Cookie是否有效', 'danger')
