@@ -13,6 +13,9 @@ from datetime import datetime, timedelta
 from flask import Flask, render_template, request, redirect, url_for, flash, jsonify, session, Response
 import random
 import requests
+import threading
+import functools
+import hashlib
 
 from xhs_api import XhsSimpleApi
 # 创建Flask应用
@@ -29,6 +32,121 @@ api_client = None
 
 # 配置文件路径
 CONFIG_FILE = 'config.json'
+
+# 缓存数据
+cache = {
+    'notes': {'data': None, 'timestamp': 0, 'ttl': 300},  # 5分钟缓存
+    'followers': {'data': None, 'timestamp': 0, 'ttl': 600},  # 10分钟缓存
+    'note_details': {},  # 笔记详情缓存，按笔记ID存储
+}
+
+# 后台任务锁
+background_tasks_lock = threading.Lock()
+background_tasks_running = False
+
+def cache_data(cache_key, ttl=300):
+    """
+    缓存装饰器，用于缓存函数返回值
+    
+    参数:
+        cache_key: 缓存键名
+        ttl: 缓存有效期（秒）
+    """
+    def decorator(func):
+        @functools.wraps(func)
+        def wrapper(*args, **kwargs):
+            # 检查是否有缓存
+            if cache_key in cache and cache[cache_key]['data'] is not None:
+                # 检查缓存是否过期
+                if time.time() - cache[cache_key]['timestamp'] < cache[cache_key]['ttl']:
+                    print(f"使用缓存数据: {cache_key}")
+                    return cache[cache_key]['data']
+            
+            # 没有缓存或缓存已过期，调用原函数
+            result = func(*args, **kwargs)
+            
+            # 更新缓存
+            if cache_key in cache:
+                cache[cache_key]['data'] = result
+                cache[cache_key]['timestamp'] = time.time()
+                cache[cache_key]['ttl'] = ttl
+            else:
+                cache[cache_key] = {'data': result, 'timestamp': time.time(), 'ttl': ttl}
+            
+            return result
+        return wrapper
+    return decorator
+
+def cache_note_detail(note_id, data, ttl=1800):
+    """缓存笔记详情数据"""
+    cache['note_details'][note_id] = {
+        'data': data,
+        'timestamp': time.time(),
+        'ttl': ttl
+    }
+
+def get_cached_note_detail(note_id):
+    """获取缓存的笔记详情数据"""
+    if note_id in cache['note_details']:
+        note_cache = cache['note_details'][note_id]
+        if time.time() - note_cache['timestamp'] < note_cache['ttl']:
+            print(f"使用缓存的笔记详情: {note_id}")
+            return note_cache['data']
+    return None
+
+def start_background_refresh():
+    """启动后台刷新任务"""
+    global background_tasks_running
+    
+    with background_tasks_lock:
+        if background_tasks_running:
+            return
+        background_tasks_running = True
+    
+    def refresh_task():
+        global background_tasks_running
+        try:
+            print("后台刷新任务开始运行")
+            
+            # 检查是否已登录
+            if not api_client:
+                if not init_api_client():
+                    print("后台刷新任务: API客户端未初始化")
+                    with background_tasks_lock:
+                        background_tasks_running = False
+                    return
+            
+            # 获取用户信息
+            try:
+                self_info = api_client.client.get_self_info2()
+                user_id = self_info.get('user_id', '')
+                
+                if user_id:
+                    # 预加载笔记列表
+                    if 'notes' in cache and (time.time() - cache['notes']['timestamp'] > cache['notes']['ttl'] / 2):
+                        print("后台刷新笔记列表")
+                        notes_data = api_client.get_user_notes(user_id)
+                        cache['notes']['data'] = notes_data
+                        cache['notes']['timestamp'] = time.time()
+                    
+                    # 预加载关注者列表
+                    if 'followers' in cache and (time.time() - cache['followers']['timestamp'] > cache['followers']['ttl'] / 2):
+                        print("后台刷新关注者列表")
+                        followers_data = api_client.get_followers()
+                        cache['followers']['data'] = followers_data
+                        cache['followers']['timestamp'] = time.time()
+            except Exception as e:
+                print(f"后台刷新任务异常: {e}")
+        finally:
+            with background_tasks_lock:
+                background_tasks_running = False
+            print("后台刷新任务结束")
+    
+    # 启动后台线程
+    thread = threading.Thread(target=refresh_task)
+    thread.daemon = True
+    thread.start()
+    print("后台刷新任务已启动")
 
 
 # 添加全局模板变量
@@ -59,6 +177,8 @@ def init_api_client():
     if cookie:
         try:
             api_client = XhsSimpleApi(cookie)
+            # 启动后台刷新任务
+            start_background_refresh()
             return True
         except Exception as e:
             print(f"初始化API客户端失败: {e}")
@@ -73,65 +193,125 @@ def index():
         if not init_api_client():
             return redirect(url_for('login'))
     
-    # 获取当前用户信息
-    try:
-        self_info = api_client.client.get_self_info2()
-        user_id = self_info.get('user_id', '')
-        
-        if not user_id:
-            flash('获取用户信息失败，请重新登录或检查网络连接', 'danger')
+    # 从配置中获取用户ID（避免每次都调用API）
+    config = load_config()
+    user_id = config.get("user_id", "")
+    
+    # 如果配置中没有用户ID，尝试从API获取
+    if not user_id:
+        try:
+            self_info = api_client.client.get_self_info2()
+            user_id = self_info.get('user_id', '')
+            if user_id:
+                config["user_id"] = user_id
+                save_config(config)
+            else:
+                flash('获取用户信息失败，请重新登录或检查网络连接', 'danger')
+                return redirect(url_for('login'))
+        except Exception as e:
+            flash(f'获取用户信息失败: {e}', 'danger')
             return redirect(url_for('login'))
-            
-        print(f"当前用户ID: {user_id}")
+    
+    # 检查是否有缓存的笔记列表
+    has_cache = 'notes' in cache and cache['notes']['data'] is not None and time.time() - cache['notes']['timestamp'] < cache['notes']['ttl']
+    
+    # 如果有缓存，直接使用缓存数据
+    if has_cache:
+        print("使用缓存的笔记列表")
+        notes_data = cache['notes']['data']
+        formatted_notes = format_notes_data(notes_data)
         
-        # 获取用户笔记列表
-        notes_data = api_client.get_user_notes(user_id)
+        # 在后台刷新数据（如果缓存接近过期）
+        if time.time() - cache['notes']['timestamp'] > cache['notes']['ttl'] / 2:
+            start_background_refresh()
         
-        # 处理笔记数据以适应UI显示
-        formatted_notes = []
-        for note in notes_data:
-            # 打印每个笔记的原始数据，用于调试
-            
-            interact_info = note.get('interact_info', {})
-            if isinstance(interact_info, str):
-                try:
-                    interact_info = json.loads(interact_info)
-                except:
-                    interact_info = {}
-            
-            # 获取封面图片URL
-            cover_url = ''
-            if isinstance(note.get('cover'), dict) and 'info_list' in note.get('cover', {}):
-                info_list = note.get('cover', {}).get('info_list', [])
-                if info_list and len(info_list) > 0:
-                    cover_url = info_list[0].get('url', '')
-            
-            # 处理点赞数
-            likes = interact_info.get('liked_count', '0')
-            try:
-                likes = int(likes)
-            except:
-                likes = 0
-            
-            formatted_note = {
-                'note_id': note.get('note_id', ''),
-                'title': note.get('display_title', '无标题').strip(),
-                'desc': note.get('desc', ''),
-                'cover': cover_url,
-                'likes': likes,
-                'time': note.get('time', '')
-            }
-            formatted_notes.append(formatted_note)
+        return render_template('index.html', notes=formatted_notes, loading=False)
+    else:
+        # 如果没有缓存，先返回加载中页面，然后通过AJAX加载数据
+        # 启动后台任务加载数据
+        start_background_refresh()
+        return render_template('index.html', notes=[], loading=True)
+
+
+@app.route('/api/notes')
+def api_notes():
+    """API端点：获取笔记列表"""
+    if not api_client:
+        if not init_api_client():
+            return jsonify({"error": "未登录"}), 401
+    
+    # 从配置中获取用户ID
+    config = load_config()
+    user_id = config.get("user_id", "")
+    
+    # 如果配置中没有用户ID，尝试从API获取
+    if not user_id:
+        try:
+            self_info = api_client.client.get_self_info2()
+            user_id = self_info.get('user_id', '')
+            if user_id:
+                config["user_id"] = user_id
+                save_config(config)
+            else:
+                return jsonify({"error": "获取用户ID失败"}), 500
+        except Exception as e:
+            return jsonify({"error": f"获取用户信息失败: {e}"}), 500
+    
+    try:
+        # 获取用户笔记列表（使用缓存）
+        if 'notes' in cache and cache['notes']['data'] is not None and time.time() - cache['notes']['timestamp'] < cache['notes']['ttl']:
+            print("API使用缓存的笔记列表")
+            notes_data = cache['notes']['data']
+        else:
+            print("API获取新的笔记列表")
+            notes_data = api_client.get_user_notes(user_id)
+            cache['notes']['data'] = notes_data
+            cache['notes']['timestamp'] = time.time()
         
-        # 显示用户信息
-        nickname = self_info.get('nickname', '')
-        if nickname:
-            flash(f'欢迎回来，{nickname}！', 'success')
+        # 格式化笔记数据
+        formatted_notes = format_notes_data(notes_data)
         
-        return render_template('index.html', notes=formatted_notes)
+        return jsonify({"notes": formatted_notes})
     except Exception as e:
-        flash(f'获取用户信息或笔记列表失败: {e}', 'danger')
-        return render_template('index.html', notes=[])
+        return jsonify({"error": f"获取笔记列表失败: {e}"}), 500
+
+
+def format_notes_data(notes_data):
+    """格式化笔记数据"""
+    formatted_notes = []
+    for note in notes_data:
+        interact_info = note.get('interact_info', {})
+        if isinstance(interact_info, str):
+            try:
+                interact_info = json.loads(interact_info)
+            except:
+                interact_info = {}
+        
+        # 获取封面图片URL
+        cover_url = ''
+        if isinstance(note.get('cover'), dict) and 'info_list' in note.get('cover', {}):
+            info_list = note.get('cover', {}).get('info_list', [])
+            if info_list and len(info_list) > 0:
+                cover_url = info_list[0].get('url', '')
+        
+        # 处理点赞数
+        likes = interact_info.get('liked_count', '0')
+        try:
+            likes = int(likes)
+        except:
+            likes = 0
+        
+        formatted_note = {
+            'note_id': note.get('note_id', ''),
+            'title': note.get('display_title', '无标题').strip(),
+            'desc': note.get('desc', ''),
+            'cover': cover_url,
+            'likes': likes,
+            'time': note.get('time', '')
+        }
+        formatted_notes.append(formatted_note)
+    
+    return formatted_notes
 
 
 @app.route('/login', methods=['GET', 'POST'])
@@ -236,6 +416,11 @@ def note_detail(note_id):
             flash('请先登录', 'danger')
             return redirect(url_for('login'))
     
+    # 检查缓存
+    cached_data = get_cached_note_detail(note_id)
+    if cached_data:
+        return render_template('note_detail.html', **cached_data)
+    
     # 使用新API获取笔记详情
     note_data = api_client.get_note_by_id(note_id)
     
@@ -333,10 +518,19 @@ def note_detail(note_id):
                         if info.get('image_scene') == 'WB_DFT' and info.get('url'):
                             images.append(info.get('url'))
                             break
-        
-
     
-    return render_template('note_detail.html', stats=stats, comments=comments, note_id=note_id, images=images)
+    # 准备渲染数据
+    render_data = {
+        'stats': stats,
+        'comments': comments,
+        'note_id': note_id,
+        'images': images if 'images' in locals() else []
+    }
+    
+    # 缓存数据
+    cache_note_detail(note_id, render_data)
+    
+    return render_template('note_detail.html', **render_data)
 
 
 @app.route('/followers')
@@ -348,11 +542,34 @@ def followers():
             flash('请先登录', 'danger')
             return redirect(url_for('login'))
     
-    # 获取关注者列表
-    followers_data = api_client.get_followers()
-
+    # 使用缓存
+    if 'followers' in cache and cache['followers']['data'] is not None and time.time() - cache['followers']['timestamp'] < cache['followers']['ttl']:
+        print("使用缓存的关注者列表")
+        followers_data = cache['followers']['data']
+    else:
+        print("获取新的关注者列表")
+        # 获取关注者列表
+        followers_data = api_client.get_followers()
+        cache['followers']['data'] = followers_data
+        cache['followers']['timestamp'] = time.time()
+    
+    # 启动后台刷新任务
+    start_background_refresh()
     
     return render_template('followers.html', followers_data=followers_data)
+
+
+@app.route('/clear_cache')
+def clear_cache():
+    """清除缓存数据"""
+    global cache
+    cache = {
+        'notes': {'data': None, 'timestamp': 0, 'ttl': 300},
+        'followers': {'data': None, 'timestamp': 0, 'ttl': 600},
+        'note_details': {},
+    }
+    flash('缓存已清除', 'success')
+    return redirect(url_for('index'))
 
 
 @app.route('/proxy_image')
@@ -361,6 +578,34 @@ def proxy_image():
     image_url = request.args.get('url', '')
     if not image_url:
         return "No URL provided", 400
+    
+    # 生成缓存键
+    cache_key = hashlib.md5(image_url.encode()).hexdigest()
+    cache_path = os.path.join('cache', 'images', cache_key)
+    
+    # 确保缓存目录存在
+    os.makedirs(os.path.dirname(cache_path), exist_ok=True)
+    
+    # 检查是否有缓存
+    if os.path.exists(cache_path):
+        # 获取文件修改时间
+        file_time = os.path.getmtime(cache_path)
+        # 如果缓存未过期（7天）
+        if time.time() - file_time < 7 * 24 * 60 * 60:
+            with open(cache_path, 'rb') as f:
+                content = f.read()
+                # 根据文件扩展名判断内容类型
+                content_type = 'image/jpeg'  # 默认JPEG
+                if image_url.lower().endswith('.png'):
+                    content_type = 'image/png'
+                elif image_url.lower().endswith('.gif'):
+                    content_type = 'image/gif'
+                elif image_url.lower().endswith('.webp'):
+                    content_type = 'image/webp'
+                
+                resp = Response(content, content_type=content_type)
+                resp.headers['Cache-Control'] = 'public, max-age=86400'  # 缓存一天
+                return resp
     
     try:
         # 设置请求头，模拟浏览器请求
@@ -377,6 +622,10 @@ def proxy_image():
         if response.status_code == 200:
             # 获取图片内容类型
             content_type = response.headers.get('Content-Type', 'image/jpeg')
+            
+            # 保存到缓存
+            with open(cache_path, 'wb') as f:
+                f.write(response.content)
             
             # 返回图片，设置缓存控制
             resp = Response(response.content, content_type=content_type)
